@@ -1,0 +1,118 @@
+//------------------------------------------------
+//--- 010 Editor v12.0.1 Binary Template
+//
+//      File: IP
+//   Authors: Hell
+//   Version: 1.0.0
+//   Purpose: 
+//  Category: 
+// File Mask: 
+//  ID Bytes: 
+//   History: 
+//------------------------------------------------
+
+typedef enum<ubyte> 
+{  
+    IPPROTOCOL_ICMP = 1,
+    IPPROTOCOL_TCP = 6,
+    IPPROTOCOL_UDP = 16,
+}IPPROTOCOL;
+
+typedef struct{
+    byte Version:4 <comment="IP packet version">;
+    byte Size:4 <name="Header Length", comment=IPv4HeaderComment>;
+    byte DiffServiceField;
+    WORD TotalLength;
+    WORD Identification <format=hex>;
+    WORD Flags:3;
+    WORD FragmentOffset:13;
+    ubyte TTL <comment="Time To Live">;
+    enum IPPROTOCOL Protocol;
+    WORD CheckSum <format=hex>;
+    DWORD SrcAddress <format=hex, comment=IPv4AddressToString>;
+    DWORD DstAddress <format=hex, comment=IPv4AddressToString>;
+    if(Size * 4 - 20 != 0)
+    {
+        byte ExtendData[Size*4-20] <format=hex>;
+    }
+}IPV4_HEADER;
+
+typedef struct{
+}IPV6_HEADER;
+
+typedef struct(byte version) {
+    if(version == 4)
+    {
+        IPV4_HEADER Header;
+    }
+    else
+    {
+        IPV6_HEADER Header;
+    }
+}IP_HEADER;
+
+typedef struct(WORD size){
+    ubyte Type;
+    ubyte Code;
+    WORD CheckSum <format=hex>;
+    WORD Identifier <format=hex>;
+    WORD SequenceNumber <format=hex>;
+    byte Data[size-8] <format=hex>;
+}ICMP_HEADER;
+
+string IPv4HeaderComment(byte &size)
+{
+    string comment;
+    SPrintf(comment, "IP Head szie %d", size * 4);
+    return comment;
+}
+
+string ProtocolToString(byte &protocol)
+{
+    if (protocol == 1)
+    {
+        return "ICMP";
+    }
+    else if(protocol == 6)
+    {
+        return "TCP";
+    }
+    else if(protocol == 16)
+    {
+        return "UDP";
+    }
+}
+
+string IPv4AddressToString(DWORD address)
+{
+    DWORD a, b, c, d;
+    a = (address & 0xFF000000) >> 24;
+    b = (address & 0xFF0000) >> 16;
+    c = (address & 0xFF00) >> 8;
+    d = (address & 0xFF);
+    string comment;
+    SPrintf(comment, "%d.%d.%d.%d", a, b, c, d);
+    return comment;
+}
+
+void ParseIcmp(WORD size)
+{
+    ICMP_HEADER icmp_header(size);
+}
+
+// Start Parse
+BigEndian();
+Printf("Start parse IP packet\n");
+byte ip_version:4 <hidden=true>;
+local IPPROTOCOL g_protocol;
+FSeek(0);
+IP_HEADER ip_header(ip_version);
+
+if(ip_header.Header.Protocol == IPPROTOCOL_ICMP)
+{
+    ICMP_HEADER icmp_header(ip_header.Header.TotalLength - ip_header.Header.Size * 4);
+}
+else
+{
+    Printf("Unknown IPPROTOCOL : %d", ip_header.Header.Protocol);
+}
