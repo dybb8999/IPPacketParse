@@ -60,6 +60,22 @@ typedef struct(WORD size){
     byte Data[size-8] <format=hex>;
 }ICMP_HEADER;
 
+typedef struct(WORD size){
+    WORD SrcPort;
+    WORD DstPort;
+    WORD Length <comment=UDPLengthComment>;
+    WORD CheckSum <format=hex, comment=UDPCheckSumComment>;
+    if(FileSize() - FTell() < size-8)
+    {
+        ubyte Payload[FileSize() - FTell()] <format=hex>;
+    }
+    else
+    {
+        ubyte Payload[size-8] <format=hex>;
+    }
+    
+}UDP_HEADER;
+
 string IPv4HeaderComment(byte &size)
 {
     string comment;
@@ -79,26 +95,40 @@ string IPv4AddressToString(DWORD address)
     return comment;
 }
 
-WORD CalcCheckSum(ubyte data[], int64 size)
+WORD CalcCheckSum(ubyte data[], int64 size, WORD last_checksum)
 {
-    local DWORD result = 0;
+    local DWORD result = ~last_checksum;
     local int64 i = 0;
     local USHORT v = 0;
+    local DWORD high_data;
     for (i = 0; i < size; i += 2)
     {
         if (size - i == 1)
         {
-            v = data[i];
+            v = ((WORD)data[i] << 8) ;
         }
         else
         {
             v = ((WORD)data[i] << 8) | (WORD)data[i+1];
         }
         result += (DWORD)v;
+
+        while(1)
+        {
+            high_data = (result & 0xFFFF0000)>>16;
+            if(high_data == 0)
+            {
+                break;
+            }
+    
+            result = result & 0xFFFF;
+            result += high_data;
+        }
+
     }
 
-    local DWORD high_data;
-    for(i = 0; i < 10; i++){
+    
+    while(1){
         high_data = (result & 0xFFFF0000)>>16;
         if(high_data == 0)
         {
@@ -118,7 +148,7 @@ WORD IPv4PacketCalcCheckSum()
     ReadBytes(ipv4_data, file_start_pos, ip_header.Header.Size*4);
     ipv4_data[10] = 0;
     ipv4_data[11] = 0;
-    local WORD checksum = CalcCheckSum(ipv4_data, ip_header.Header.Size*4);
+    local WORD checksum = CalcCheckSum(ipv4_data, ip_header.Header.Size*4, 0);
     return checksum;
 }
 
@@ -126,6 +156,67 @@ string IPv4PacketCheckSumComment(WORD origin_checksum)
 {
     string comment;
     WORD calc_checksum = IPv4PacketCalcCheckSum();
+    if(calc_checksum == origin_checksum)
+    {
+        SPrintf(comment, "correct");
+    }
+    else
+    {
+        SPrintf(comment, "incorrect, should be 0x%X", calc_checksum);
+    }
+    return comment;
+}
+
+DWORD UDPPacketCalcCheckSum()
+{
+    // src_addr + dst_addr + 0x00 + 17 + UDP_size + UDP_data
+    local DWORD address_size = sizeof(ip_header.Header.SrcAddress);
+    local ubyte src_addr[address_size];
+    local ubyte dst_addr[address_size];
+    local ubyte append_data[4];
+    local DWORD udp_data_size = ip_header.Header.TotalLength - ip_packet_size;
+    local ubyte udp_data[udp_data_size];
+ 
+
+    ReadBytes(udp_data, file_start_pos + ip_packet_size, udp_data_size);
+    udp_data[6] = 0;
+    udp_data[7] = 0;
+
+    ConvertDataToBytes(ip_header.Header.SrcAddress, src_addr);
+    ConvertDataToBytes(ip_header.Header.DstAddress, dst_addr);
+    append_data[0] = 0;
+    append_data[1] = IPPROTOCOL_UDP;
+    append_data[2] = (udp_data_size & 0xFF00) >> 8;
+    append_data[3] = udp_data_size & 0xFF;
+    
+    local WORD checksum = ~0;
+    checksum = CalcCheckSum(src_addr, address_size, checksum);
+    checksum = CalcCheckSum(dst_addr, address_size, checksum);
+    checksum = CalcCheckSum(append_data, 4, checksum);
+    checksum = CalcCheckSum(udp_data, udp_data_size, checksum);
+    return checksum;
+}
+
+string UDPLengthComment(WORD udp_packet_size)
+{
+    if (ip_header.Header.TotalLength - ip_packet_size == udp_packet_size)
+    {
+        return "";
+    }
+    else if(ip_header.Header.TotalLength - ip_packet_size < udp_packet_size)
+    {
+        return "UDP packet size too big";
+    }
+    else
+    {
+        return "UDP packet size not enouth";
+    }
+}
+
+string UDPCheckSumComment(WORD origin_checksum)
+{
+    string comment;
+    WORD calc_checksum = UDPPacketCalcCheckSum();
     if(calc_checksum == origin_checksum)
     {
         SPrintf(comment, "correct");
@@ -145,14 +236,28 @@ byte ip_version:4 <hidden=true>;
 local IPPROTOCOL g_protocol;
 FSeek(file_start_pos);
 IP_HEADER ip_header(ip_version);
-
+local WORD ip_packet_size = 0;
+if (ip_header.Header.Version == 4)
+{
+    ip_packet_size = ip_header.Header.Size * 4;
+}
+else if(ip_header.Header.Version == 6)
+{
+    ip_packet_size = ip_header.Header.Size;
+}
+else
+{
+    Printf("Unknown IP version : %d", ip_header.Header.Version);
+}
+local WORD next_head_size = ip_header.Header.TotalLength - ip_header.Header.Size * 4;
 if(ip_header.Header.Protocol == IPPROTOCOL_ICMP)
 {
-    ICMP_HEADER icmp_header(ip_header.Header.TotalLength - ip_header.Header.Size * 4);
+    ICMP_HEADER icmp_header(next_head_size);
 }
-else if(ip_header.Header.Protocol == IPPROTOCOL_TCP)
+else if(ip_header.Header.Protocol == IPPROTOCOL_UDP)
 {
-    
+    UDP_HEADER udp_header(next_head_size);
+    UDPPacketCalcCheckSum();
 }
 else
 {
