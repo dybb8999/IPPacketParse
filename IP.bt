@@ -117,7 +117,7 @@ typedef struct(WORD size){
 string IPv4HeaderComment(byte &size)
 {
     string comment;
-    SPrintf(comment, "IP Head szie %d", size * 4);
+    SPrintf(comment, "IP Head size %d", size * 4);
     return comment;
 }
 
