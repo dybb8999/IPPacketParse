@@ -47,6 +47,14 @@ typedef struct{
 }IPV4_HEADER;
 
 typedef struct{
+    DWORD Version:4 <comment="IP packet version">;
+    DWORD TrafficClass:8;
+    DWORD FlowLabel:12;
+    WORD PayloadLength;
+    IPPROTOCOL Protocol;
+    ubyte HopLimit;
+    ubyte SrcAddress[16];
+    ubyte DestAddress[16];
 }IPV6_HEADER;
 
 typedef struct(byte version) {
@@ -91,9 +99,9 @@ typedef struct(WORD size){
     DWORD SequenceNumber;
     DWORD AcknowledgmentNumber;
     WORD HeaderLength:4;
-    WORD Flags:12;
+    WORD Flags:12 <format=binary, comment=TCPFlagsComment>;
     WORD Window;
-    WORD CheckSum;
+    WORD CheckSum <format=hex, comment=TCPCheckSumComment>;
     WORD UrgentPointer;
 }TCP_HEADER;
 
@@ -195,7 +203,7 @@ DWORD UDPPacketCalcCheckSum()
     local ubyte src_addr[address_size];
     local ubyte dst_addr[address_size];
     local ubyte append_data[4];
-    local DWORD udp_data_size = ip_header.Header.TotalLength - ip_packet_size;
+    local DWORD udp_data_size = next_head_size;
     local ubyte udp_data[udp_data_size];
  
 
@@ -215,6 +223,36 @@ DWORD UDPPacketCalcCheckSum()
     checksum = CalcCheckSum(dst_addr, address_size, checksum);
     checksum = CalcCheckSum(append_data, 4, checksum);
     checksum = CalcCheckSum(udp_data, udp_data_size, checksum);
+    return checksum;
+}
+
+DWORD TCPPacketCalcCheckSum()
+{
+    // src_addr + dst_addr + 0x00 + 6 + UDP_size + UDP_data
+    local DWORD address_size = sizeof(ip_header.Header.SrcAddress);
+    local ubyte src_addr[address_size];
+    local ubyte dst_addr[address_size];
+    local ubyte append_data[4];
+    local DWORD tcp_data_size = next_head_size;
+    local ubyte tcp_data[tcp_data_size];
+ 
+
+    ReadBytes(tcp_data, file_start_pos + ip_packet_size, tcp_data_size);
+    tcp_data[16] = 0;
+    tcp_data[17] = 0;
+
+    ConvertDataToBytes(ip_header.Header.SrcAddress, src_addr);
+    ConvertDataToBytes(ip_header.Header.DstAddress, dst_addr);
+    append_data[0] = 0;
+    append_data[1] = IPPROTOCOL_TCP;
+    append_data[2] = (tcp_data_size & 0xFF00) >> 8;
+    append_data[3] = tcp_data_size & 0xFF;
+    
+    local WORD checksum = ~0;
+    checksum = CalcCheckSum(src_addr, address_size, checksum);
+    checksum = CalcCheckSum(dst_addr, address_size, checksum);
+    checksum = CalcCheckSum(append_data, 4, checksum);
+    checksum = CalcCheckSum(tcp_data, tcp_data_size, checksum);
     return checksum;
 }
 
@@ -249,6 +287,111 @@ string UDPCheckSumComment(WORD origin_checksum)
     return comment;
 }
 
+string TCPCheckSumComment(WORD origin_checksum)
+{
+    string comment;
+    WORD calc_checksum = TCPPacketCalcCheckSum();
+    if(calc_checksum == origin_checksum)
+    {
+        SPrintf(comment, "correct");
+    }
+    else
+    {
+        SPrintf(comment, "incorrect, should be 0x%X", calc_checksum);
+    }
+    return comment;
+}
+
+string TCPFlagsComment(WORD flags)
+{
+    string comment;
+    if (flags & 0x100)
+    {
+        comment += "ECN";
+    }
+    
+    if (flags & 0x80)
+    {
+        if(Strlen(comment) > 0)
+        {
+            comment += ", ";
+        }
+
+        comment += "Reduced";
+    }
+
+    if (flags & 0x40)
+    {
+        if(Strlen(comment) > 0)
+        {
+            comment += ", ";
+        }
+
+        comment += "ECN-Echo";
+    }
+
+    if (flags & 0x20)
+    {
+        if(Strlen(comment) > 0)
+        {
+            comment += ", ";
+        }
+
+        comment += "Urgent";
+    }
+
+    if (flags & 0x10)
+    {
+        if(Strlen(comment) > 0)
+        {
+            comment += ", ";
+        }
+
+        comment += "ACK";
+    }
+
+    if (flags & 0x8)
+    {
+        if(Strlen(comment) > 0)
+        {
+            comment += ", ";
+        }
+
+        comment += "RST";
+    }
+
+    if (flags & 0x4)
+    {
+        if(Strlen(comment) > 0)
+        {
+            comment += ", ";
+        }
+
+        comment += "PSH";
+    }
+
+    if (flags & 0x2)
+    {
+        if(Strlen(comment) > 0)
+        {
+            comment += ", ";
+        }
+
+        comment += "SYN";
+    }
+
+    if (flags & 0x1)
+    {
+        if(Strlen(comment) > 0)
+        {
+            comment += ", ";
+        }
+
+        comment += "FIN";
+    }
+    return comment;
+}
+
 // Start Parse
 BigEndian();
 Printf("Start parse IP packet\n");
@@ -258,13 +401,16 @@ local IPPROTOCOL g_protocol;
 FSeek(file_start_pos);
 IP_HEADER ip_header(ip_version);
 local WORD ip_packet_size = 0;
+local WORD next_head_size = 0;
 if (ip_version == 4)
 {
     ip_packet_size = ip_header.Header.Size * 4;
+    next_head_size = ip_header.Header.TotalLength - ip_packet_size;
 }
 else if(ip_version == 6)
 {
-    ip_packet_size = ip_header.Header.Size;
+    ip_packet_size = sizeof(IPV6_HEADER);
+    next_head_size = ip_header.Header.PayloadLength;
 }
 else
 {
@@ -272,19 +418,22 @@ else
     return -1;
 }
 
-local WORD next_head_size = ip_header.Header.TotalLength - ip_header.Header.Size * 4;
+
 
 switch(ip_header.Header.Protocol)
 {
     case IPPROTOCOL_ICMP:
         ICMP_HEADER icmp_header(next_head_size);
-    break;
+        break;
     case IPPROTOCOL_UDP:
         UDP_HEADER udp_header(next_head_size);
-    break;
+        break;
     case IPPROTOCOL_TCP:
         TCP_HEADER tcp_header(next_head_size);
-    break;
+        break;
+    case IPPROTOCOL_IPv6ICMP:
+        ICMP_HEADER icmp_header(next_head_size);
+        break;
     default:
         Printf("Unknown IPPROTOCOL : %d\n", ip_header.Header.Protocol);
         return -1;
