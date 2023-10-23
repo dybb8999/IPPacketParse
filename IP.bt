@@ -4,8 +4,8 @@
 //      File: IP
 //   Authors: Hell
 //   Version: 1.0.0
-//   Purpose: 
-//  Category: 
+//   Purpose: Parse IP packet
+//  Category: Net
 // File Mask: 
 //  ID Bytes: 
 //   History: 
@@ -13,15 +13,24 @@
 
 typedef enum<ubyte> 
 {  
-    IPPROTOCOL_ICMP = 1,
-    IPPROTOCOL_TCP = 6,
-    IPPROTOCOL_UDP = 17,
+    IPPROTOCOL_ICMP = 1,        // Internet Control Message
+    IPPROTOCOL_IGMP= 2,         // Internet Group Management
+    IPPROTOCOL_IPv4 = 4,        // IPv4 encapsulation Stream
+    IPPROTOCOL_TCP = 6,         // Transmission Control Protocol
+    IPPROTOCOL_UDP = 17,        // User Datagram Protocol
+    IPPROTOCOL_IPv6ICMP = 58,   // ICMP for IPv6
 }IPPROTOCOL;
 
 typedef struct{
     byte Version:4 <comment="IP packet version">;
     byte Size:4 <name="Header Length", comment=IPv4HeaderComment>;
-    byte DiffServiceField;
+    union{
+        byte Value;
+        struct{
+            byte CodePoint:6 <format=binary, name="Differentiated Services Codepoine">;
+            byte ExplicitCongestionNotification:2 <format=binary, name="Explicit Congestion Notification">;
+        }Member;
+    }DifferentiatedServicesFields;
     WORD TotalLength;
     WORD Identification <format=hex>;
     WORD Flags:3;
@@ -237,17 +246,18 @@ local IPPROTOCOL g_protocol;
 FSeek(file_start_pos);
 IP_HEADER ip_header(ip_version);
 local WORD ip_packet_size = 0;
-if (ip_header.Header.Version == 4)
+if (ip_version == 4)
 {
     ip_packet_size = ip_header.Header.Size * 4;
 }
-else if(ip_header.Header.Version == 6)
+else if(ip_version == 6)
 {
     ip_packet_size = ip_header.Header.Size;
 }
 else
 {
-    Printf("Unknown IP version : %d", ip_header.Header.Version);
+    Printf("Unknown IP version : %d\n", ip_version);
+    return -1;
 }
 local WORD next_head_size = ip_header.Header.TotalLength - ip_header.Header.Size * 4;
 if(ip_header.Header.Protocol == IPPROTOCOL_ICMP)
