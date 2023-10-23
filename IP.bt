@@ -85,6 +85,18 @@ typedef struct(WORD size){
     
 }UDP_HEADER;
 
+typedef struct(WORD size){
+    WORD SrcPort;
+    WORD DstPort;
+    DWORD SequenceNumber;
+    DWORD AcknowledgmentNumber;
+    WORD HeaderLength:4;
+    WORD Flags:12;
+    WORD Window;
+    WORD CheckSum;
+    WORD UrgentPointer;
+}TCP_HEADER;
+
 string IPv4HeaderComment(byte &size)
 {
     string comment;
@@ -259,18 +271,22 @@ else
     Printf("Unknown IP version : %d\n", ip_version);
     return -1;
 }
+
 local WORD next_head_size = ip_header.Header.TotalLength - ip_header.Header.Size * 4;
-if(ip_header.Header.Protocol == IPPROTOCOL_ICMP)
+
+switch(ip_header.Header.Protocol)
 {
-    ICMP_HEADER icmp_header(next_head_size);
+    case IPPROTOCOL_ICMP:
+        ICMP_HEADER icmp_header(next_head_size);
+    break;
+    case IPPROTOCOL_UDP:
+        UDP_HEADER udp_header(next_head_size);
+    break;
+    case IPPROTOCOL_TCP:
+        TCP_HEADER tcp_header(next_head_size);
+    break;
+    default:
+        Printf("Unknown IPPROTOCOL : %d\n", ip_header.Header.Protocol);
+        return -1;
 }
-else if(ip_header.Header.Protocol == IPPROTOCOL_UDP)
-{
-    UDP_HEADER udp_header(next_head_size);
-    UDPPacketCalcCheckSum();
-}
-else
-{
-    Printf("Unknown IPPROTOCOL : %d\n", ip_header.Header.Protocol);
-    return -1;
-}
+
